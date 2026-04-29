@@ -33,11 +33,16 @@
   <div>アニメ速度: <input id="speed" type="range" min="0" max="3" step="0.1" value="1"></div>
 </div>
 
-<script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/loaders/DRACOLoader.js';
+<!-- Three.js（グローバル版） -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js"></script>
 
+<!-- GLTFLoader -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160/examples/js/loaders/GLTFLoader.js"></script>
+
+<!-- DRACO（圧縮対応） -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160/examples/js/libs/draco/draco_decoder.js"></script>
+
+<script>
 let scene = new THREE.Scene();
 scene.background = new THREE.Color(0x222222);
 
@@ -48,7 +53,7 @@ let renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// ライト（重要）
+// ライト
 scene.add(new THREE.AmbientLight(0xffffff, 2));
 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
 dirLight.position.set(5, 5, 5);
@@ -64,23 +69,18 @@ window.addEventListener('resize', () => {
 let mixer;
 let model;
 
-const loader = new GLTFLoader();
-
-// DRACO対応（これ重要）
-const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/libs/draco/');
-loader.setDRACOLoader(dracoLoader);
+const loader = new THREE.GLTFLoader();
 
 // 🔥 GLB読み込み
 loader.load(
   'melee_156.glb',
 
-  (gltf) => {
+  function (gltf) {
     console.log("読み込み成功");
 
     model = gltf.scene;
 
-    // 中心補正（これで見えない問題かなり防げる）
+    // 中心補正
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
     model.position.sub(center);
@@ -90,17 +90,17 @@ loader.load(
     // アニメーション
     if (gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(model);
-      gltf.animations.forEach((clip) => {
+      gltf.animations.forEach(function (clip) {
         mixer.clipAction(clip).play();
       });
     }
   },
 
-  (progress) => {
+  function (progress) {
     console.log((progress.loaded / progress.total * 100) + '% loaded');
   },
 
-  (error) => {
+  function (error) {
     console.error("読み込みエラー:", error);
   }
 );
