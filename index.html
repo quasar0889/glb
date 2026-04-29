@@ -3,67 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GLB Viewer & Editor</title>
+    <title>Advanced GLB Editor</title>
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <style>
-        body { margin: 0; font-family: sans-serif; background-color: #f0f0f0; }
-        model-viewer {
-            width: 100%;
-            height: 80vh;
-            background-color: #ffffff;
-        }
-        .controls {
-            padding: 20px;
-            display: flex;
-            gap: 20px;
-            background: #fff;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-        }
-        .control-group { display: flex; flex-direction: column; }
-        label { font-size: 12px; margin-bottom: 5px; color: #666; }
+        body { margin: 0; display: flex; height: 100vh; font-family: 'Segoe UI', sans-serif; background: #2c3e50; color: white; }
+        
+        /* プレビューエリア */
+        #container { flex: 1; position: relative; background: radial-gradient(#455a64, #263238); }
+        model-viewer { width: 100%; height: 100%; --poster-color: transparent; }
+
+        /* サイドパネル */
+        .sidebar { width: 320px; background: rgba(0, 0, 0, 0.8); padding: 20px; overflow-y: auto; box-shadow: -2px 0 10px rgba(0,0,0,0.5); }
+        h2 { font-size: 1.2rem; border-bottom: 1px solid #555; padding-bottom: 10px; margin-top: 0; }
+        
+        .control-group { margin-bottom: 20px; }
+        label { display: block; font-size: 0.8rem; margin-bottom: 5px; color: #bbb; }
+        select, input[type="range"], button { width: 100%; margin-bottom: 5px; }
+        
+        .coord-inputs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
+        .coord-inputs input { width: 100%; background: #333; border: 1px solid #555; color: white; padding: 5px; font-size: 0.8rem; }
+
+        .btn-record { background: #e74c3c; color: white; border: none; padding: 10px; cursor: pointer; border-radius: 4px; font-weight: bold; }
+        .btn-record:hover { background: #c0392b; }
+        .btn-record.locked { background: #27ae60; }
+
+        .log-area { width: 100%; height: 80px; background: #111; color: #0f0; font-family: monospace; font-size: 10px; margin-top: 10px; padding: 5px; border: none; white-space: pre-wrap; }
     </style>
 </head>
 <body>
 
-    <model-viewer 
-        id="editor-model"
-        src="melee_156.glb" 
-        ar 
-        camera-controls 
-        touch-action="pan-y"
-        autoplay
-        shadow-intensity="1"
-        alt="3D Model: melee_156">
+<div id="container">
+    <model-viewer id="mv" src="melee_156.glb" ar camera-controls autoplay shadow-intensity="1">
     </model-viewer>
+</div>
 
-    <div class="controls">
-        <div class="control-group">
-            <label for="scale">Scale (大きさ)</label>
-            <input type="range" id="scale" min="0.5" max="2" step="0.1" value="1">
-        </div>
-        <div class="control-group">
-            <label for="color">Background Color (背景色)</label>
-            <input type="color" id="color" value="#ffffff">
-        </div>
-        <div class="control-group">
-            <label>Interaction</label>
-            <button onclick="document.querySelector('#editor-model').style.backgroundColor = '#222';">Dark Mode</button>
+<div class="sidebar">
+    <h2>Editor Controls</h2>
+
+    <div class="control-group">
+        <label>Animation (アニメーション切り替え)</label>
+        <select id="anim-select"><option value="">None</option></select>
+        <label>Speed (再生速度: <span id="speed-val">1.0</span>x)</label>
+        <input type="range" id="anim-speed" min="0" max="3" step="0.1" value="1">
+    </div>
+
+    <div class="control-group">
+        <label>Camera Target (奥行き/縦/横 - 中心点)</label>
+        <div class="coord-inputs">
+            <input type="number" id="target-x" value="0" step="0.1" title="横">
+            <input type="number" id="target-y" value="0" step="0.1" title="縦">
+            <input type="number" id="target-z" value="0" step="0.1" title="奥行き">
         </div>
     </div>
 
-    <script>
-        const modelViewer = document.querySelector("#editor-model");
+    <div class="control-group">
+        <label>Camera Orbit (回転角度/距離)</label>
+        <input type="range" id="orbit-dist" min="1" max="20" step="0.5" value="5">
+        <label>Zoom (FOV)</label>
+        <input type="range" id="fov" min="10" max="60" step="1" value="30">
+    </div>
 
-        // スケール変更の処理
-        document.querySelector('#scale').addEventListener('input', (event) => {
-            const scale = event.target.value;
-            modelViewer.style.transform = `scale(${scale})`;
-        });
+    <div class="control-group">
+        <button id="lock-btn" class="btn-record">座標を固定 (Lock Mode)</button>
+        <p style="font-size: 0.7rem; color: #888;">固定中は手動操作が無効になります</p>
+        <button id="copy-cfg" style="background:#3498db; color:white; border:none; padding:8px; cursor:pointer;">現在の座標をログに出力</button>
+        <textarea id="log" class="log-area" readonly placeholder="出力された設定値がここに表示されます"></textarea>
+    </div>
+</div>
 
-        // 背景色変更の処理
-        document.querySelector('#color').addEventListener('input', (event) => {
-            modelViewer.style.backgroundColor = event.target.value;
-        });
-    </script>
+<script>
+const mv = document.querySelector("#mv");
+const animSelect = document.querySelector("#anim-select");
+const animSpeed = document.querySelector("#anim-speed");
+const logArea = document.querySelector("#log");
+
+// 1. アニメーションの自動読み込み
+mv.addEventListener('load', () => {
+    const names = mv.availableAnimations;
+    names.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        animSelect.appendChild(opt);
+    });
+});
+
+// アニメーション変更
+animSelect.addEventListener('change', (e) => {
+    mv.animationName = e.target.value;
+    mv.play();
+});
+
+// 再生速度
+animSpeed.addEventListener('input', (e) => {
+    mv.timeScale = e.target.value;
+    document.querySelector("#speed-val").textContent = e.target.value;
+});
+
+// 2. 座標管理 (Target: 位置, Orbit: 回転/距離)
+const updateTransform = () => {
+    const x = document.querySelector("#target-x").value;
+    const y = document.querySelector("#target-y").value;
+    const z = document.querySelector("#target-z").value;
+    mv.cameraTarget = `${x}m ${y}m ${z}m`;
+    
+    const dist = document.querySelector("#orbit-dist").value;
+    mv.cameraOrbit = `0deg 75deg ${dist}m`;
+    mv.fieldOfView = `${document.querySelector("#fov").value}deg`;
+};
+
+["target-x", "target-y", "target-z", "orbit-dist", "fov"].forEach(id => {
+    document.getElementById(id).addEventListener('input', updateTransform);
+});
+
+// 3. 固定モード (Lock Mode)
+let isLocked = false;
+document.querySelector("#lock-btn").addEventListener('click', (e) => {
+    isLocked = !isLocked;
+    if (isLocked) {
+        mv.removeAttribute("camera-controls"); // 手動操作を禁止
+        e.target.textContent = "固定解除 (Unlock)";
+        e.target.classList.add("locked");
+    } else {
+        mv.setAttribute("camera-controls", "");
+        e.target.textContent = "座標を固定 (Lock Mode)";
+        e.target.classList.remove("locked");
+    }
+});
+
+// 4. 設定値の記録 (エクスポート)
+document.querySelector("#copy-cfg").addEventListener('click', () => {
+    const config = {
+        target: mv.cameraTarget,
+        orbit: mv.getCameraOrbit(),
+        fov: mv.fieldOfView,
+        animation: mv.animationName,
+        speed: mv.timeScale
+    };
+    logArea.value = JSON.stringify(config, null, 2);
+});
+</script>
+
 </body>
 </html>
