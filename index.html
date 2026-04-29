@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Voxiom Knife Overlay</title>
+    <style>
+        /* 背景を透過させ、スクロールバーを消す */
+        body { margin: 0; overflow: hidden; background: transparent; }
+        canvas { display: block; }
+        #ui-container {
+            position: fixed; top: 20px; right: 20px;
+            background: rgba(15, 15, 20, 0.85); color: #fff;
+            padding: 15px; border-radius: 8px; font-family: monospace;
+            border: 1px solid #333; display: none; /* 初期状態は非表示 */
+        }
+        input[type=range] { width: 200px; }
+        button {
+            width: 100%; padding: 8px; margin-top: 10px;
+            background: #00ffcc; color: #000; border: none;
+            font-weight: bold; cursor: pointer;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+    <div id="ui-container">
+        <h3 style="margin:0 0 10px 0; font-size:14px; color:#00ffcc;">Knife Positioning</h3>
+        </div>
+
+    <script>
+        const STORAGE_KEY = 'voxiom_knife_config';
+        let config = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
+            x: 1.5, y: -1.0, z: -3.0, rx: 0, ry: 0, rz: 0, scale: 1.0, locked: true
+        };
+
+        const GLB_URL = 'melee_156.glb';
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        // alpha: true で背景を透過
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 5, 5);
+        scene.add(directionalLight);
+
+        let model;
+        let isUnarmed = false; // 親（Voxiom）からの素手判定状態
+
+        const loader = new THREE.GLTFLoader();
+        loader.load(GLB_URL, function(gltf) {
+            model = gltf.scene;
+            scene.add(model);
+            updateModelTransform();
+            model.visible = false;
+        });
+
+        function updateModelTransform() {
+            if (!model) return;
+            model.position.set(config.x, config.y, config.z);
+            model.rotation.set(config.rx, config.ry, config.rz);
+            model.scale.set(config.scale, config.scale, config.scale);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (model) {
+                // UIが開いている時（調整中）は強制表示、それ以外は素手判定に従う
+                model.visible = !config.locked || isUnarmed;
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- 親ウィンドウ(Tampermonkey)からのメッセージ受信 ---
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (data.type === 'toggle_ui') {
+                config.locked = !config.locked;
+                document.getElementById('ui-container').style.display = config.locked ? 'none' : 'block';
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+                // UI状態が変わったことを親に返し、iframeのクリック貫通(pointer-events)を切り替えてもらう
+                window.parent.postMessage({ type: 'ui_state', locked: config.locked }, '*');
+            } else if (data.type === 'equip_state') {
+                isUnarmed = data.isUnarmed;
+            }
+        });
+
+        // --- エディターUI構築 ---
+        const uiContainer = document.getElementById('ui-container');
+        uiContainer.style.display = config.locked ? 'none' : 'block';
+
+        function createSlider(label, key, min, max, step) {
+            const wrap = document.createElement('div');
+            wrap.style.marginBottom = '10px';
+            const text = document.createElement('div');
+            text.innerText = `${label}: ${config[key]}`;
+            text.style.fontSize = '12px';
+            const input = document.createElement('input');
+            input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = config[key];
+            input.addEventListener('input', (e) => {
+                config[key] = parseFloat(e.target.value);
+                text.innerText = `${label}: ${config[key]}`;
+                updateModelTransform();
+            });
+            wrap.appendChild(text); wrap.appendChild(input); uiContainer.appendChild(wrap);
+        }
+
+        createSlider('PosX', 'x', -10, 10, 0.1);
+        createSlider('PosY', 'y', -10, 10, 0.1);
+        createSlider('PosZ', 'z', -20, 1, 0.1);
+        createSlider('RotX', 'rx', -Math.PI, Math.PI, 0.05);
+        createSlider('RotY', 'ry', -Math.PI, Math.PI, 0.05);
+        createSlider('RotZ', 'rz', -Math.PI, Math.PI, 0.05);
+        createSlider('Scale', 'scale', 0.1, 5, 0.05);
+
+        const saveBtn = document.createElement('button');
+        saveBtn.innerText = 'Save & Lock';
+        saveBtn.addEventListener('click', () => {
+            config.locked = true;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+            uiContainer.style.display = 'none';
+            window.parent.postMessage({ type: 'ui_state', locked: true }, '*');
+        });
+        uiContainer.appendChild(saveBtn);
+    </script>
+</body>
+</html>
