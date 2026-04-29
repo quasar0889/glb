@@ -6,11 +6,7 @@
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
-        model-viewer {
-            width: 100%; height: 100%;
-            background-color: transparent;
-            --poster-color: transparent;
-        }
+        model-viewer { width: 100%; height: 100%; background-color: transparent; --poster-color: transparent; }
     </style>
 </head>
 <body>
@@ -21,29 +17,22 @@
 
 <script>
     const mv = document.querySelector("#mv");
-    let config = { posX: 0, posY: 0, posZ: 0, orbitTheta: 0, orbitPhi: 90, fov: 30, speed: 1 };
+    let config = { posX: 0, posY: 0, posZ: 0, orbitTheta: 0, orbitPhi: 90, fov: 30, speed: 1, scale: 1 };
     let isWalking = false;
     let swayTime = 0;
 
-    // 定期的に実行して「揺れ」を表現する（ゲーム内のような挙動）
     function updateSway() {
         if (!mv.loaded) { requestAnimationFrame(updateSway); return; }
-
         let targetX = config.posX;
         let targetY = config.posY;
-
         if (isWalking) {
-            // 歩行中の揺れ（大きく速い）
             swayTime += 0.15;
             targetX += Math.sin(swayTime) * 0.05;
             targetY += Math.abs(Math.cos(swayTime)) * 0.03;
         } else {
-            // 待機中の揺れ（ゆっくり）
             swayTime += 0.02;
             targetY += Math.sin(swayTime) * 0.01;
         }
-
-        // camera-targetを使って位置を調整 (奥行きはZ)
         mv.cameraTarget = `${targetX}m ${targetY}m ${config.posZ}m`;
         requestAnimationFrame(updateSway);
     }
@@ -56,22 +45,16 @@
             mv.cameraOrbit = `${d.orbitTheta}deg ${d.orbitPhi}deg 2m`;
             mv.fieldOfView = `${d.fov}deg`;
             mv.timeScale = d.speed;
+            // スケール（大きさ）の変更を追加
+            mv.scale = `${d.scale} ${d.scale} ${d.scale}`;
         }
         if (d.type === "action") {
-            // アニメーションの切り替え
             const anims = mv.availableAnimations;
-            if (d.action === "attack") {
-                // 1番目のアニメーションを再生（通常Attack）
-                mv.animationName = anims[0] || null;
-            } else if (d.action === "inspect") {
-                // 2番目のアニメーションを再生（通常Inspect）
-                mv.animationName = anims[1] || anims[0];
-            }
-            mv.play({ repetitions: 1 }); // 1回だけ再生
+            if (d.action === "attack") mv.animationName = anims[0] || null;
+            else if (d.action === "inspect") mv.animationName = anims[1] || anims[0];
+            mv.play({ repetitions: 1 });
         }
-        if (d.type === "state") {
-            isWalking = d.isWalking;
-        }
+        if (d.type === "state") isWalking = d.isWalking;
     });
 </script>
 </body>
