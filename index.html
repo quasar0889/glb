@@ -96,6 +96,23 @@ function animate() {
 }
 
 animate();
+
+
+  loader.load(
+  'melee_156.glb',
+
+  (gltf) => {
+    console.log("成功", gltf);
+    model = gltf.scene;
+    scene.add(model);
+  },
+
+  undefined,
+
+  (error) => {
+    console.error("失敗", error);
+  }
+);
 </script>
 
 </body>
