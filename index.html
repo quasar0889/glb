@@ -2,45 +2,76 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Voxiom Overlay Provider</title>
+    <title>Voxiom Advanced Overlay</title>
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <style>
-        /* 背景を完全に透明にする */
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
         model-viewer {
-            width: 100%;
-            height: 100%;
-            background-color: transparent; /* 背景透過 */
+            width: 100%; height: 100%;
+            background-color: transparent;
             --poster-color: transparent;
-        }
-        /* エディターUIは必要な時だけ表示（Shift+Eなどで制御される） */
-        .sidebar {
-            position: fixed; right: 10px; top: 10px; width: 280px; 
-            background: rgba(0,0,0,0.8); color: white; padding: 15px;
-            border-radius: 8px; display: none; /* 初期は非表示 */
-            font-family: sans-serif; pointer-events: auto;
         }
     </style>
 </head>
 <body>
 
-<model-viewer id="mv" src="melee_156.glb" camera-controls autoplay shadow-intensity="1">
+<model-viewer id="mv" src="melee_156.glb" autoplay shadow-intensity="1" 
+    camera-orbit="0deg 90deg 2m" camera-target="0m 0m 0m" field-of-view="30deg">
 </model-viewer>
-
-<div class="sidebar" id="ui">
-    <h3 style="margin:0 0 10px 0">Knife Editor</h3>
-    <button onclick="document.getElementById('ui').style.display='none'">Close & Lock</button>
-</div>
 
 <script>
     const mv = document.querySelector("#mv");
-    
-    // 親ウィンドウ（スクリプト）からの命令を受け取る
-    window.addEventListener("message", (event) => {
-        if (event.data === "showUI") {
-            document.getElementById('ui').style.display = 'block';
+    let config = { posX: 0, posY: 0, posZ: 0, orbitTheta: 0, orbitPhi: 90, fov: 30, speed: 1 };
+    let isWalking = false;
+    let swayTime = 0;
+
+    // 定期的に実行して「揺れ」を表現する（ゲーム内のような挙動）
+    function updateSway() {
+        if (!mv.loaded) { requestAnimationFrame(updateSway); return; }
+
+        let targetX = config.posX;
+        let targetY = config.posY;
+
+        if (isWalking) {
+            // 歩行中の揺れ（大きく速い）
+            swayTime += 0.15;
+            targetX += Math.sin(swayTime) * 0.05;
+            targetY += Math.abs(Math.cos(swayTime)) * 0.03;
+        } else {
+            // 待機中の揺れ（ゆっくり）
+            swayTime += 0.02;
+            targetY += Math.sin(swayTime) * 0.01;
         }
-        // 他のアニメーション変更命令などもここに追加可能
+
+        // camera-targetを使って位置を調整 (奥行きはZ)
+        mv.cameraTarget = `${targetX}m ${targetY}m ${config.posZ}m`;
+        requestAnimationFrame(updateSway);
+    }
+    updateSway();
+
+    window.addEventListener("message", (event) => {
+        const d = event.data;
+        if (d.type === "config") {
+            config = d;
+            mv.cameraOrbit = `${d.orbitTheta}deg ${d.orbitPhi}deg 2m`;
+            mv.fieldOfView = `${d.fov}deg`;
+            mv.timeScale = d.speed;
+        }
+        if (d.type === "action") {
+            // アニメーションの切り替え
+            const anims = mv.availableAnimations;
+            if (d.action === "attack") {
+                // 1番目のアニメーションを再生（通常Attack）
+                mv.animationName = anims[0] || null;
+            } else if (d.action === "inspect") {
+                // 2番目のアニメーションを再生（通常Inspect）
+                mv.animationName = anims[1] || anims[0];
+            }
+            mv.play({ repetitions: 1 }); // 1回だけ再生
+        }
+        if (d.type === "state") {
+            isWalking = d.isWalking;
+        }
     });
 </script>
 </body>
