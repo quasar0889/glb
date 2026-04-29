@@ -2,92 +2,171 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Voxiom Pro-FPS Overlay</title>
+    <title>Voxiom Pro-FPS Overlay V4</title>
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; user-select: none; }
+        /* 編集モード時のカーソル変更 */
+        body.editing { cursor: grab; background: rgba(0, 255, 255, 0.05); }
+        body.editing:active { cursor: grabbing; }
         model-viewer { width: 100%; height: 100%; background-color: transparent; --poster-color: transparent; }
     </style>
 </head>
 <body>
 
-<!-- shadow-intensity="0" で影を削除 -->
 <model-viewer id="mv" src="melee_156.glb" autoplay shadow-intensity="0" 
-    camera-orbit="0deg 90deg 2m" camera-target="0m 0m 0m" field-of-view="30deg">
+    camera-orbit="0deg 90deg 2m" camera-target="0m 0m 0m" field-of-view="30deg"
+    animation-crossfade-duration="300">
 </model-viewer>
 
 <script>
     const mv = document.querySelector("#mv");
-    let config = { posX: 0, posY: 0, posZ: 0, theta: 0, phi: 90, fov: 30, speed: 1, scale: 1 };
+    let config = { posX: 0, posY: 0, posZ: 0, theta: 0, phi: 90, fov: 30, scale: 1 };
     
-    // スウェイ（揺れ）用変数
-    let mouseDeltaX = 0;
-    let mouseDeltaY = 0;
-    let currentSwayX = 0;
-    let currentSwayY = 0;
-    let currentRotationZ = 0; // 傾き
+    // FPS風挙動の計算用変数
+    let targetSwayX = 0, targetSwayY = 0;
+    let currentSwayX = 0, currentSwayY = 0;
+    let currentRotationZ = 0;
     let isWalking = false;
     let swayTime = 0;
+    let idleTime = 0;
+
+    let isEditing = false;
+    let currentAction = "idle";
 
     const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+
+    // アニメーション再生ロジック
+    function playAnimation(name, loop = false) {
+        if (!mv.availableAnimations || mv.availableAnimations.length === 0) return;
+        const anims = mv.availableAnimations;
+        // 名前でアニメーションを検索 (idle, attack, inspect等)
+        let targetAnim = anims.find(a => a.toLowerCase().includes(name));
+        if (!targetAnim) targetAnim = anims[0]; // 見つからなければデフォルト
+
+        mv.animationName = targetAnim;
+        if (loop) {
+            mv.play({ repetitions: Infinity });
+        } else {
+            mv.play({ repetitions: 1 });
+            // 再生が終わったら自動的にIdle(待機)に戻る
+            mv.addEventListener('finished', () => {
+                if(currentAction !== 'idle') {
+                    currentAction = 'idle';
+                    playAnimation('idle', true);
+                }
+            }, { once: true });
+        }
+    }
+
+    // ロード完了時に待機アニメーションを開始
+    mv.addEventListener('load', () => playAnimation('idle', true));
 
     function update() {
         if (!mv.loaded) { requestAnimationFrame(update); return; }
 
-        // マウスの動きによる慣性（Lerpで滑らかにする）
-        currentSwayX = lerp(currentSwayX, mouseDeltaX * 0.0005, 0.1);
-        currentSwayY = lerp(currentSwayY, mouseDeltaY * 0.0005, 0.1);
-        currentRotationZ = lerp(currentRotationZ, mouseDeltaX * 0.2, 0.1);
+        if (!isEditing) {
+            // Sway (視点移動時の慣性)
+            currentSwayX = lerp(currentSwayX, targetSwayX, 0.1);
+            currentSwayY = lerp(currentSwayY, targetSwayY, 0.1);
+            currentRotationZ = lerp(currentRotationZ, targetSwayX * 20, 0.08); // 傾き
 
-        // 基本の位置
-        let targetX = config.posX - currentSwayX;
-        let targetY = config.posY + currentSwayY;
+            // 中心へ戻ろうとするバネの力
+            targetSwayX = lerp(targetSwayX, 0, 0.05);
+            targetSwayY = lerp(targetSwayY, 0, 0.05);
 
-        // 歩行時の揺れ（Bobbing）
-        if (isWalking) {
-            swayTime += 0.15;
-            targetX += Math.sin(swayTime) * 0.03;
-            targetY += Math.abs(Math.cos(swayTime)) * 0.02;
+            // Bobbing (歩行揺れと呼吸揺れ)
+            let bobX = 0, bobY = 0;
+            if (isWalking) {
+                swayTime += 0.12;
+                bobX = Math.cos(swayTime) * 0.015; // 左右
+                bobY = Math.abs(Math.sin(swayTime)) * 0.015; // 上下(バウンス)
+            } else {
+                idleTime += 0.02;
+                bobX = Math.cos(idleTime) * 0.002;
+                bobY = Math.sin(idleTime * 2) * 0.002; // ゆっくりした呼吸
+            }
+
+            let finalX = config.posX - currentSwayX + bobX;
+            let finalY = config.posY + currentSwayY + bobY;
+
+            mv.cameraTarget = `${finalX}m ${finalY}m ${config.posZ}m`;
+            mv.cameraOrbit = `${config.theta + currentRotationZ}deg ${config.phi}deg 2m`;
         } else {
-            swayTime += 0.02;
-            targetY += Math.sin(swayTime) * 0.005;
+            // 編集モード中は揺れをストップして正確に配置
+            mv.cameraTarget = `${config.posX}m ${config.posY}m ${config.posZ}m`;
+            mv.cameraOrbit = `${config.theta}deg ${config.phi}deg 2m`;
         }
-
-        // 反映
-        mv.cameraTarget = `${targetX}m ${targetY}m ${config.posZ}m`;
-        // 視点移動時にモデルを少し傾ける（thetaにcurrentRotationZを加算して調整も可）
-        mv.cameraOrbit = `${config.theta + (currentRotationZ * 0.5)}deg ${config.phi}deg 2m`;
-        
-        // デルタを減衰させる（マウスが止まったら戻るように）
-        mouseDeltaX *= 0.9;
-        mouseDeltaY *= 0.9;
 
         requestAnimationFrame(update);
     }
     update();
 
+    // 編集モードのドラッグ操作ロジック
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let dragButton = 0;
+
+    window.addEventListener('mousedown', (e) => {
+        if (!isEditing) return;
+        isDragging = true;
+        dragButton = e.button;
+        dragStart = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (isEditing && isDragging) {
+            let dx = e.clientX - dragStart.x;
+            let dy = e.clientY - dragStart.y;
+            dragStart = { x: e.clientX, y: e.clientY };
+
+            if (dragButton === 0) { // 左クリック：位置の移動
+                config.posX -= dx * 0.005;
+                config.posY += dy * 0.005;
+            } else if (dragButton === 2) { // 右クリック：回転
+                config.theta -= dx * 0.5;
+                config.phi -= dy * 0.5;
+                config.phi = Math.max(0, Math.min(180, config.phi)); // 上下の限界
+            }
+            // 親ウィンドウ(UserScript)に変更を送信して同期
+            window.parent.postMessage({ type: 'sync', config: config }, '*');
+        }
+    });
+
+    window.addEventListener('mouseup', () => isDragging = false);
+    window.addEventListener('wheel', (e) => {
+        if (!isEditing) return;
+        config.fov += e.deltaY > 0 ? 1 : -1;
+        config.fov = Math.max(10, Math.min(100, config.fov));
+        mv.fieldOfView = `${config.fov}deg`;
+        window.parent.postMessage({ type: 'sync', config: config }, '*');
+    });
+    window.addEventListener('contextmenu', e => e.preventDefault());
+
+    // UserScriptからの命令受信
     window.addEventListener("message", (event) => {
         const d = event.data;
-        if (d.type === "mouseMove") {
-            mouseDeltaX = d.dx;
-            mouseDeltaY = d.dy;
+        if (d.type === "mouseMove" && !isEditing) {
+            // Swayのターゲットを更新（画面外に行きすぎないよう制限）
+            targetSwayX += d.dx * 0.001;
+            targetSwayY += d.dy * 0.001;
+            targetSwayX = Math.max(-0.04, Math.min(0.04, targetSwayX));
+            targetSwayY = Math.max(-0.04, Math.min(0.04, targetSwayY));
         }
         if (d.type === "config") {
-            config = { 
-                posX: d.posX, posY: d.posY, posZ: d.posZ, 
-                theta: d.orbitTheta, phi: d.orbitPhi, 
-                fov: d.fov, speed: d.speed, scale: d.scale 
-            };
+            config = { ...config, ...d };
             mv.scale = `${d.scale} ${d.scale} ${d.scale}`;
             mv.fieldOfView = `${d.fov}deg`;
         }
-        if (d.type === "action") {
-            const anims = mv.availableAnimations;
-            if (d.action === "attack") mv.animationName = anims[0] || null;
-            else if (d.action === "inspect") mv.animationName = anims[1] || anims[0];
-            mv.play({ repetitions: 1 });
+        if (d.type === "action" && !isEditing) {
+            currentAction = d.action;
+            playAnimation(d.action, false);
         }
         if (d.type === "state") isWalking = d.isWalking;
+        if (d.type === "editMode") {
+            isEditing = d.value;
+            document.body.classList.toggle('editing', isEditing);
+        }
     });
 </script>
 </body>
