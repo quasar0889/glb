@@ -1,92 +1,102 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-    <style>
-        body { margin: 0; overflow: hidden; background: transparent; }
-        canvas { width: 100vw; height: 100vh; }
-    </style>
+  <meta charset="UTF-8">
+  <title>GLB Viewer Editor</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.6);
+      color: white;
+      padding: 10px;
+      font-family: sans-serif;
+      border-radius: 8px;
+    }
+    input { width: 100px; }
+  </style>
 </head>
 <body>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script>
-        let scene, camera, renderer, model, container;
-        let targetX = 0, targetY = 0; // マウス追従用
-        let bobTick = 0; // 歩き揺れ用
-        let isMoving = false;
 
-        function init() {
-            scene = new THREE.Scene();
-            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-            renderer.setClearColor(0x000000, 0);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement);
+<div id="ui">
+  <div>位置 X: <input id="posX" type="range" min="-5" max="5" step="0.1"></div>
+  <div>位置 Y: <input id="posY" type="range" min="-5" max="5" step="0.1"></div>
+  <div>位置 Z: <input id="posZ" type="range" min="-5" max="5" step="0.1"></div>
 
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
-            const ambient = new THREE.AmbientLight(0xffffff, 1.2);
-            scene.add(ambient);
-            const sun = new THREE.DirectionalLight(0xffffff, 0.6);
-            sun.position.set(5, 10, 5);
-            scene.add(sun);
+  <div>回転 X: <input id="rotX" type="range" min="0" max="6.28" step="0.01"></div>
+  <div>回転 Y: <input id="rotY" type="range" min="0" max="6.28" step="0.01"></div>
+  <div>回転 Z: <input id="rotZ" type="range" min="0" max="6.28" step="0.01"></div>
 
-            container = new THREE.Group(); // 揺れを制御するための親
-            scene.add(container);
+  <div>スケール: <input id="scale" type="range" min="0.1" max="3" step="0.1" value="1"></div>
+  <div>アニメ速度: <input id="speed" type="range" min="0" max="3" step="0.1" value="1"></div>
+</div>
 
-            const urlParams = new URLSearchParams(window.location.search);
-            const glbUrl = urlParams.get('glb');
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/loaders/GLTFLoader.js';
 
-            if (glbUrl) {
-                new THREE.GLTFLoader().load(glbUrl, (gltf) => {
-                    model = gltf.scene;
-                    container.add(model);
-                    animate();
-                });
-            }
-        }
+let scene = new THREE.Scene();
+let camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+let renderer = new THREE.WebGLRenderer({antialias:true});
 
-        window.addEventListener('message', (e) => {
-            const d = e.data;
-            if (d.type === 'input') {
-                // マウス移動によるスウェイ（慣性）
-                targetX = d.mx * 0.001; 
-                targetY = d.my * 0.001;
-                isMoving = d.moving;
-            }
-            if (d.type === 'transform' && model) {
-                model.position.set(d.x, d.y, d.z);
-                model.rotation.set(d.rx, d.ry, d.rz);
-                model.scale.set(d.s, d.s, d.s);
-            }
-            if (d.type === 'visibility' && model) {
-                model.visible = d.visible;
-            }
-        });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
 
-        function animate() {
-            requestAnimationFrame(animate);
+let light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5,5,5);
+scene.add(light);
 
-            if (model) {
-                // 1. スウェイ（マウス移動への遅延追従）
-                container.position.x += (targetX - container.position.x) * 0.1;
-                container.position.y += (-targetY - container.position.y) * 0.1;
-                container.rotation.z += (targetX * 0.5 - container.rotation.z) * 0.1;
+camera.position.z = 5;
 
-                // 2. ボビング（移動中の揺れ）
-                if (isMoving) {
-                    bobTick += 0.15;
-                    container.position.y += Math.sin(bobTick) * 0.005;
-                    container.position.x += Math.cos(bobTick * 0.5) * 0.003;
-                } else {
-                    // アイドル状態の呼吸のような揺れ
-                    bobTick += 0.02;
-                    container.position.y += Math.sin(bobTick) * 0.001;
-                }
-            }
+let mixer;
+let model;
 
-            renderer.render(scene, camera);
-        }
-        init();
-    </script>
+const loader = new GLTFLoader();
+loader.load('melee_156.glb', (gltf) => {
+  model = gltf.scene;
+  scene.add(model);
+
+  if (gltf.animations.length) {
+    mixer = new THREE.AnimationMixer(model);
+    gltf.animations.forEach((clip) => {
+      mixer.clipAction(clip).play();
+    });
+  }
+});
+
+let clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (mixer) {
+    let speed = document.getElementById("speed").value;
+    mixer.update(clock.getDelta() * speed);
+  }
+
+  if (model) {
+    model.position.set(
+      posX.value,
+      posY.value,
+      posZ.value
+    );
+
+    model.rotation.set(
+      rotX.value,
+      rotY.value,
+      rotZ.value
+    );
+
+    model.scale.setScalar(scale.value);
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
+
 </body>
 </html>
