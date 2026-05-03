@@ -7,30 +7,10 @@
     <style>
         body { margin: 0; overflow: hidden; background-color: transparent; user-select: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
-        
-        /* エディター用のUIデザイン */
-        #editor-ui {
-            display: none;
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(15, 20, 25, 0.85);
-            color: #fff;
-            padding: 20px;
-            border-radius: 12px;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-            backdrop-filter: blur(5px);
-            border: 1px solid rgba(255,255,255,0.1);
-            pointer-events: none; /* UIの奥の画面もドラッグできるように貫通させる */
-        }
-        #editor-ui h3 { margin: 0 0 15px 0; font-size: 18px; color: #4ade80; }
-        #editor-ui p { margin: 8px 0; font-size: 14px; }
-        .key { background: #333; padding: 2px 6px; border-radius: 4px; font-family: monospace; border: 1px solid #555; }
-        hr { border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 15px 0; }
-        #editor-values { font-family: monospace; font-size: 15px; color: #93c5fd; line-height: 1.5; }
+        /* lil-guiのフォント調整 */
+        .lil-gui { --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     </style>
-    <!-- Three.jsのインポート -->
+    <!-- Three.jsとUIツール(lil-gui)のインポート -->
     <script type="importmap">
         {
             "imports": {
@@ -41,22 +21,12 @@
     </script>
 </head>
 <body>
-    <!-- エディター画面 -->
-    <div id="editor-ui">
-        <h3>🔧 直感エディターモード</h3>
-        <p><span class="key">ドラッグ</span> : 位置の移動 (X, Y)</p>
-        <p><span class="key">スクロール</span> : 大きさの変更 (Scale)</p>
-        <p><span class="key">Shift</span> + <span class="key">スクロール</span> : 奥行きの変更 (Z)</p>
-        <p><span class="key">Alt</span> + <span class="key">E</span> : 保存して通常モードへ戻る</p>
-        <hr>
-        <div id="editor-values"></div>
-    </div>
-
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
-        // 内部設定
+        // 設定の基本オブジェクト
         let config = {
             position: { x: 0.8, y: -0.6, z: -1.5 },
             rotation: { x: 0, y: Math.PI / 2, z: 0 },
@@ -85,6 +55,35 @@
         const actions = {};
         let currentAction = null;
 
+        // 💡 変更をTampermonkeyに送信してセーブする関数
+        const saveConfig = () => {
+            window.parent.postMessage({ type: 'saveConfig', config: config }, '*');
+        };
+
+        // ===============================================
+        // 🔧 限界まで調整可能なプロ仕様エディターUI (lil-gui)
+        // ===============================================
+        const gui = new GUI({ title: '🔪 限界設定エディター (Alt+Eで終了)' });
+        gui.hide(); // 通常時は隠す
+
+        // 1. 位置の調整パネル (0.001刻み)
+        const posFolder = gui.addFolder('位置 (Position)');
+        posFolder.add(config.position, 'x', -5, 5, 0.001).name('X (左右)').listen().onChange(() => { if (knife) knife.position.x = config.position.x; saveConfig(); });
+        posFolder.add(config.position, 'y', -5, 5, 0.001).name('Y (上下)').listen().onChange(() => { if (knife) knife.position.y = config.position.y; saveConfig(); });
+        posFolder.add(config.position, 'z', -5, 5, 0.001).name('Z (奥行き)').listen().onChange(() => { if (knife) knife.position.z = config.position.z; saveConfig(); });
+
+        // 2. 向き(角度)の調整パネル (0.001刻み)
+        const rotFolder = gui.addFolder('向き (Rotation)');
+        rotFolder.add(config.rotation, 'x', -Math.PI * 2, Math.PI * 2, 0.001).name('X回転 (縦振り)').listen().onChange(() => { if (knife) knife.rotation.x = config.rotation.x; saveConfig(); });
+        rotFolder.add(config.rotation, 'y', -Math.PI * 2, Math.PI * 2, 0.001).name('Y回転 (横振り)').listen().onChange(() => { if (knife) knife.rotation.y = config.rotation.y; saveConfig(); });
+        rotFolder.add(config.rotation, 'z', -Math.PI * 2, Math.PI * 2, 0.001).name('Z回転 (捻り)').listen().onChange(() => { if (knife) knife.rotation.z = config.rotation.z; saveConfig(); });
+
+        // 3. その他の調整パネル
+        const miscFolder = gui.addFolder('その他 (Misc)');
+        miscFolder.add(config, 'scale', 0.01, 5, 0.001).name('大きさ (Scale)').listen().onChange(() => { if (knife) knife.scale.setScalar(config.scale); saveConfig(); });
+        miscFolder.add(config, 'animationSpeed', 0.1, 5, 0.01).name('アニメ再生速度').listen().onChange(saveConfig);
+        miscFolder.add(config, 'swayIntensity', 0, 0.01, 0.0001).name('マウス揺れの強さ').listen().onChange(saveConfig);
+        
         const loader = new GLTFLoader();
         loader.load('melee_156.glb', (gltf) => {
             knife = gltf.scene;
@@ -97,9 +96,7 @@
 
             if (gltf.animations && gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(knife);
-                gltf.animations.forEach((clip) => {
-                    actions[clip.name] = mixer.clipAction(clip);
-                });
+                gltf.animations.forEach((clip) => { actions[clip.name] = mixer.clipAction(clip); });
 
                 mixer.addEventListener('finished', (e) => {
                     if (e.action === currentAction && actions[config.defaultAnimation]) {
@@ -110,62 +107,42 @@
                 });
 
                 let idleAnim = actions[config.defaultAnimation] || actions[gltf.animations[0].name];
-                if (idleAnim) {
-                    idleAnim.play();
-                    currentAction = idleAnim;
-                }
+                if (idleAnim) { idleAnim.play(); currentAction = idleAnim; }
             }
         });
 
-        // --- エディター機能とステート ---
+        // ステート管理
         let isEditorMode = false;
         let isDragging = false;
         let previousMouse = { x: 0, y: 0 };
-        
-        const uiElement = document.getElementById('editor-ui');
-        const valuesElement = document.getElementById('editor-values');
-
-        function updateUI() {
-            valuesElement.innerHTML = `
-                X: ${config.position.x.toFixed(3)}<br>
-                Y: ${config.position.y.toFixed(3)}<br>
-                Z: ${config.position.z.toFixed(3)}<br>
-                Scale: ${config.scale.toFixed(3)}
-            `;
-            // 親(Tampermonkey)に変更された値を送信してローカルストレージに保存させる
-            window.parent.postMessage({ 
-                type: 'saveConfig', 
-                config: { position: config.position, scale: config.scale } 
-            }, '*');
-        }
-
         let targetRotation = new THREE.Vector2(0, 0);
         let currentSway = new THREE.Vector2(0, 0);
 
-        // 親からの通信を受信
+        // 通信受信
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (!data) return;
 
             if (data.type === 'toggleEditor') {
                 isEditorMode = data.state;
-                uiElement.style.display = isEditorMode ? 'block' : 'none';
                 if (isEditorMode) {
-                    updateUI(); // エディター起動時にUIを更新
-                    targetRotation.set(0, 0); // エディター中は揺れをリセット
+                    gui.show();
+                    targetRotation.set(0, 0);
                     currentSway.set(0, 0);
                     if (knife) knife.rotation.set(config.rotation.x, config.rotation.y, config.rotation.z);
+                } else {
+                    gui.hide();
                 }
             }
             else if (data.type === 'mouseMove') {
-                if (isEditorMode) return; // エディター中は揺らさない
+                if (isEditorMode) return;
                 targetRotation.y += data.movementX * config.swayIntensity;
                 targetRotation.x += data.movementY * config.swayIntensity;
                 targetRotation.x = THREE.MathUtils.clamp(targetRotation.x, -0.2, 0.2);
                 targetRotation.y = THREE.MathUtils.clamp(targetRotation.y, -0.2, 0.2);
             }
             else if (data.type === 'playAnimation') {
-                if (isEditorMode) return; // エディター中はアニメーションしない
+                if (isEditorMode) return;
                 const animName = data.name;
                 if (mixer && actions[animName]) {
                     if (currentAction) currentAction.fadeOut(0.1);
@@ -179,23 +156,26 @@
                 }
             }
             else if (data.type === 'updateConfig') {
-                if (data.config.position) {
-                    config.position.x = data.config.position.x;
-                    config.position.y = data.config.position.y;
-                    config.position.z = data.config.position.z;
-                }
-                if (data.config.scale !== undefined) config.scale = data.config.scale;
+                const c = data.config;
+                // UIと紐付いているため、オブジェクトを上書きせず中身の数値を更新する
+                if (c.position) { config.position.x = c.position.x; config.position.y = c.position.y; config.position.z = c.position.z; }
+                if (c.rotation) { config.rotation.x = c.rotation.x; config.rotation.y = c.rotation.y; config.rotation.z = c.rotation.z; }
+                if (c.scale !== undefined) config.scale = c.scale;
+                if (c.swayIntensity !== undefined) config.swayIntensity = c.swayIntensity;
+                if (c.swayRecovery !== undefined) config.swayRecovery = c.swayRecovery;
+                if (c.animationSpeed !== undefined) config.animationSpeed = c.animationSpeed;
                 
                 if (knife) {
                     knife.position.set(config.position.x, config.position.y, config.position.z);
+                    knife.rotation.set(config.rotation.x, config.rotation.y, config.rotation.z);
                     knife.scale.setScalar(config.scale);
                 }
             }
         });
 
-        // --- マウスによる直感的なエディット操作 ---
+        // マウスによる直感ドラッグ操作 (UI以外の背景を触った時)
         window.addEventListener('mousedown', (e) => {
-            if (!isEditorMode) return;
+            if (!isEditorMode || e.target.closest('.lil-gui')) return;
             isDragging = true;
             previousMouse = { x: e.clientX, y: e.clientY };
         });
@@ -204,40 +184,31 @@
             if (isEditorMode && isDragging && knife) {
                 const deltaX = e.clientX - previousMouse.x;
                 const deltaY = e.clientY - previousMouse.y;
-                
-                // ドラッグ量に応じて位置を移動 (感度はここで調整)
                 config.position.x += deltaX * 0.005;
                 config.position.y -= deltaY * 0.005;
-                
                 knife.position.x = config.position.x;
                 knife.position.y = config.position.y;
-                
                 previousMouse = { x: e.clientX, y: e.clientY };
-                updateUI();
+                saveConfig(); // UIにも連動して数値が変わる
             }
         });
 
         window.addEventListener('mouseup', () => { isDragging = false; });
 
         window.addEventListener('wheel', (e) => {
-            if (!isEditorMode || !knife) return;
-            e.preventDefault(); // スクロールによる画面移動を防ぐ
-            
+            if (!isEditorMode || !knife || e.target.closest('.lil-gui')) return;
+            e.preventDefault(); 
             const delta = e.deltaY > 0 ? -1 : 1;
-            
             if (e.shiftKey) {
-                // Shift+スクロールで奥行き(Z軸)を調整
                 config.position.z += delta * 0.05;
                 knife.position.z = config.position.z;
             } else {
-                // 通常スクロールで大きさ(Scale)を調整
                 config.scale += delta * 0.02;
-                config.scale = Math.max(0.1, config.scale); // マイナスにならないように
+                config.scale = Math.max(0.1, config.scale);
                 knife.scale.setScalar(config.scale);
             }
-            updateUI();
+            saveConfig();
         }, { passive: false });
-
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -247,7 +218,7 @@
 
         const clock = new THREE.Clock();
         function animate() {
-            requestAnimationFrame(animate);
+            requestAnimationFrame(animate);F
             const delta = clock.getDelta();
 
             if (mixer) mixer.update(delta);
