@@ -9,7 +9,6 @@
         canvas { display: block; width: 100vw; height: 100vh; }
         .lil-gui { --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     </style>
-    <!-- 安定版のモジュール読み込み -->
     <script type="importmap">
         {
             "imports": {
@@ -33,7 +32,12 @@
             swayIntensity: 0.0015,
             swayRecovery: 5.0,
             animationSpeed: 1.0,
-            defaultAnimation: 'idle'
+            defaultAnimation: 'idle',
+            keyBinds: {
+                anim1Key: 'KeyF', anim1Name: 'inspect',
+                anim2Key: 'Click', anim2Name: 'attack',
+                anim3Key: '', anim3Name: ''
+            }
         };
 
         const scene = new THREE.Scene();
@@ -58,7 +62,6 @@
             window.parent.postMessage({ type: 'saveConfig', config: config }, '*');
         };
 
-        // UIエディター
         const gui = new GUI({ title: '🔪 限界設定エディター (Alt+Eで終了)' });
         gui.hide();
 
@@ -72,20 +75,38 @@
         rotFolder.add(config.rotation, 'y', -Math.PI * 2, Math.PI * 2, 0.001).name('Y回転').listen().onChange(() => { if (knife) knife.rotation.y = config.rotation.y; saveConfig(); });
         rotFolder.add(config.rotation, 'z', -Math.PI * 2, Math.PI * 2, 0.001).name('Z回転').listen().onChange(() => { if (knife) knife.rotation.z = config.rotation.z; saveConfig(); });
 
+        const keyFolder = gui.addFolder('キー割り当て');
+        keyFolder.add(config.keyBinds, 'anim1Key').name('キー枠1 (例: KeyF)').listen().onChange(saveConfig);
+        keyFolder.add(config.keyBinds, 'anim1Name').name('└ アニメ名').listen().onChange(saveConfig);
+        keyFolder.add(config.keyBinds, 'anim2Key').name('キー枠2 (例: Click)').listen().onChange(saveConfig);
+        keyFolder.add(config.keyBinds, 'anim2Name').name('└ アニメ名').listen().onChange(saveConfig);
+        keyFolder.add(config.keyBinds, 'anim3Key').name('キー枠3').listen().onChange(saveConfig);
+        keyFolder.add(config.keyBinds, 'anim3Name').name('└ アニメ名').listen().onChange(saveConfig);
+
         const miscFolder = gui.addFolder('その他 (Misc)');
         miscFolder.add(config, 'scale', 0.01, 5, 0.001).name('大きさ').listen().onChange(() => { if (knife) knife.scale.setScalar(config.scale); saveConfig(); });
-        miscFolder.add(config, 'animationSpeed', 0.1, 5, 0.01).name('アニメ速度').listen().onChange(saveConfig);
+        
+        // 💡 修正箇所1: アニメーション速度をスライダーを動かした瞬間に全体へ反映させる
+        miscFolder.add(config, 'animationSpeed', 0.1, 5, 0.01).name('アニメ速度').listen().onChange((v) => { 
+            if (mixer) mixer.timeScale = v; 
+            saveConfig(); 
+        });
+
         miscFolder.add(config, 'swayIntensity', 0, 0.01, 0.0001).name('揺れの強さ').listen().onChange(saveConfig);
         
-        // 🆘 リセット機能
-        const resetObj = {
-            reset: () => {
-                if (confirm("ナイフが見えなくなった場合などに使用します。設定を初期化してリロードしますか？")) {
-                    window.parent.postMessage({ type: 'resetConfig' }, '*');
-                }
+        // 💡 おまけ修正: 待機アニメ名をエディターで変更した瞬間、リアルタイムに切り替わるようにしました
+        miscFolder.add(config, 'defaultAnimation').name('待機時のアニメ名').listen().onChange((v) => {
+            if (mixer && actions[v]) {
+                if (currentAction) currentAction.fadeOut(0.2);
+                const action = actions[v];
+                action.reset().fadeIn(0.2).play();
+                currentAction = action;
             }
-        };
-        gui.add(resetObj, 'reset').name('⚠️ 全て初期位置にリセット');
+            saveConfig();
+        });
+        
+        const resetObj = { reset: () => { if (confirm("設定を全て初期化しますか？")) window.parent.postMessage({ type: 'resetConfig' }, '*'); } };
+        gui.add(resetObj, 'reset').name('⚠️ 全て初期化');
 
         const loader = new GLTFLoader();
         loader.load('melee_156.glb', (gltf) => {
@@ -99,6 +120,10 @@
 
             if (gltf.animations && gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(knife);
+                
+                // 💡 修正箇所2: 初期化時にも全体の速度を設定
+                mixer.timeScale = config.animationSpeed; 
+                
                 gltf.animations.forEach((clip) => { actions[clip.name] = mixer.clipAction(clip); });
 
                 mixer.addEventListener('finished', (e) => {
@@ -142,14 +167,23 @@
                 targetRotation.x = THREE.MathUtils.clamp(targetRotation.x, -0.2, 0.2);
                 targetRotation.y = THREE.MathUtils.clamp(targetRotation.y, -0.2, 0.2);
             }
-            else if (data.type === 'playAnimation') {
+            else if (data.type === 'input') {
                 if (isEditorMode) return;
-                const animName = data.name;
-                if (mixer && actions[animName]) {
+                const inputCode = data.code;
+                
+                let targetAnim = null;
+                if (config.keyBinds.anim1Key === inputCode) targetAnim = config.keyBinds.anim1Name;
+                else if (config.keyBinds.anim2Key === inputCode) targetAnim = config.keyBinds.anim2Name;
+                else if (config.keyBinds.anim3Key === inputCode) targetAnim = config.keyBinds.anim3Name;
+
+                if (targetAnim && mixer && actions[targetAnim]) {
                     if (currentAction) currentAction.fadeOut(0.1);
-                    const action = actions[animName];
-                    action.reset().setEffectiveTimeScale(config.animationSpeed).fadeIn(0.1).play();
-                    if (animName !== config.defaultAnimation) {
+                    const action = actions[targetAnim];
+                    
+                    // 💡 修正箇所3: 再生ごとに個別の速度を上書きする処理を削除し、グローバル速度を優先
+                    action.reset().fadeIn(0.1).play();
+                    
+                    if (targetAnim !== config.defaultAnimation) {
                         action.setLoop(THREE.LoopOnce);
                         action.clampWhenFinished = true;
                     }
@@ -158,12 +192,19 @@
             }
             else if (data.type === 'updateConfig') {
                 const c = data.config;
-                if (c.position) { config.position.x = c.position.x; config.position.y = c.position.y; config.position.z = c.position.z; }
-                if (c.rotation) { config.rotation.x = c.rotation.x; config.rotation.y = c.rotation.y; config.rotation.z = c.rotation.z; }
+                if (c.position) Object.assign(config.position, c.position);
+                if (c.rotation) Object.assign(config.rotation, c.rotation);
+                if (c.keyBinds) Object.assign(config.keyBinds, c.keyBinds);
                 if (c.scale !== undefined) config.scale = c.scale;
                 if (c.swayIntensity !== undefined) config.swayIntensity = c.swayIntensity;
                 if (c.swayRecovery !== undefined) config.swayRecovery = c.swayRecovery;
-                if (c.animationSpeed !== undefined) config.animationSpeed = c.animationSpeed;
+                if (c.defaultAnimation !== undefined) config.defaultAnimation = c.defaultAnimation;
+                
+                // 💡 修正箇所4: 設定受信時にも全体の速度を更新
+                if (c.animationSpeed !== undefined) {
+                    config.animationSpeed = c.animationSpeed;
+                    if (mixer) mixer.timeScale = config.animationSpeed;
+                }
                 
                 if (knife) {
                     knife.position.set(config.position.x, config.position.y, config.position.z);
