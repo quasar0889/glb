@@ -5,8 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voxiom Butterfly Knife</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: transparent; }
+        body { margin: 0; overflow: hidden; background-color: transparent; user-select: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* エディター用のUIデザイン */
+        #editor-ui {
+            display: none;
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 20, 25, 0.85);
+            color: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255,255,255,0.1);
+            pointer-events: none; /* UIの奥の画面もドラッグできるように貫通させる */
+        }
+        #editor-ui h3 { margin: 0 0 15px 0; font-size: 18px; color: #4ade80; }
+        #editor-ui p { margin: 8px 0; font-size: 14px; }
+        .key { background: #333; padding: 2px 6px; border-radius: 4px; font-family: monospace; border: 1px solid #555; }
+        hr { border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 15px 0; }
+        #editor-values { font-family: monospace; font-size: 15px; color: #93c5fd; line-height: 1.5; }
     </style>
     <!-- Three.jsのインポート -->
     <script type="importmap">
@@ -19,33 +41,40 @@
     </script>
 </head>
 <body>
+    <!-- エディター画面 -->
+    <div id="editor-ui">
+        <h3>🔧 直感エディターモード</h3>
+        <p><span class="key">ドラッグ</span> : 位置の移動 (X, Y)</p>
+        <p><span class="key">スクロール</span> : 大きさの変更 (Scale)</p>
+        <p><span class="key">Shift</span> + <span class="key">スクロール</span> : 奥行きの変更 (Z)</p>
+        <p><span class="key">Alt</span> + <span class="key">E</span> : 保存して通常モードへ戻る</p>
+        <hr>
+        <div id="editor-values"></div>
+    </div>
+
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // ==========================================
-        // 🔪 モデルの精密な配置と揺れの設定
-        // ==========================================
+        // 内部設定
         let config = {
-            position: { x: 0.8, y: -0.6, z: -1.5 }, // x:左右, y:上下, z:奥行き (ゲーム画面に合わせて微調整)
-            rotation: { x: 0, y: Math.PI / 2, z: 0 }, // モデルの初期角度
-            scale: 1.0,                               // モデルの大きさ
-            swayIntensity: 0.0015,                    // マウスを動かしたときの揺れの強さ
-            swayRecovery: 5.0,                        // 揺れが元に戻る速さ
-            animationSpeed: 1.0,                      // アニメーション全体の再生速度
-            defaultAnimation: 'idle'                  // 何もしていない時の待機アニメーション名（GLB内の名前に合わせる）
+            position: { x: 0.8, y: -0.6, z: -1.5 },
+            rotation: { x: 0, y: Math.PI / 2, z: 0 },
+            scale: 1.0,
+            swayIntensity: 0.0015,
+            swayRecovery: 5.0,
+            animationSpeed: 1.0,
+            defaultAnimation: 'idle'
         };
 
         const scene = new THREE.Scene();
-        // FPSの標準的な視野角(FOV:75)
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
         
         const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setClearColor(0x000000, 0); // 背景を完全に透明化
+        renderer.setClearColor(0x000000, 0); 
         document.body.appendChild(renderer.domElement);
 
-        // ゲーム内の環境に合わせたライティング
         const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
         scene.add(ambientLight);
         const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -57,14 +86,12 @@
         let currentAction = null;
 
         const loader = new GLTFLoader();
-        loader.load('melee_156.glb', (gltf) => {
+        loader.load('melee_126.glb', (gltf) => {
             knife = gltf.scene;
-            
             knife.position.set(config.position.x, config.position.y, config.position.z);
             knife.rotation.set(config.rotation.x, config.rotation.y, config.rotation.z);
             knife.scale.setScalar(config.scale);
 
-            // カメラの子要素にすることで、視点移動時に常に画面の定位置（FPS視点）に固定される
             camera.add(knife);
             scene.add(camera);
 
@@ -74,7 +101,6 @@
                     actions[clip.name] = mixer.clipAction(clip);
                 });
 
-                // アニメーション終了時の処理（再生が終わったら待機状態に戻る）
                 mixer.addEventListener('finished', (e) => {
                     if (e.action === currentAction && actions[config.defaultAnimation]) {
                         e.action.fadeOut(0.2);
@@ -83,7 +109,6 @@
                     }
                 });
 
-                // 初期アニメーション再生
                 let idleAnim = actions[config.defaultAnimation] || actions[gltf.animations[0].name];
                 if (idleAnim) {
                     idleAnim.play();
@@ -92,32 +117,60 @@
             }
         });
 
-        // 揺れ（Sway）の計算用ベクトル
+        // --- エディター機能とステート ---
+        let isEditorMode = false;
+        let isDragging = false;
+        let previousMouse = { x: 0, y: 0 };
+        
+        const uiElement = document.getElementById('editor-ui');
+        const valuesElement = document.getElementById('editor-values');
+
+        function updateUI() {
+            valuesElement.innerHTML = `
+                X: ${config.position.x.toFixed(3)}<br>
+                Y: ${config.position.y.toFixed(3)}<br>
+                Z: ${config.position.z.toFixed(3)}<br>
+                Scale: ${config.scale.toFixed(3)}
+            `;
+            // 親(Tampermonkey)に変更された値を送信してローカルストレージに保存させる
+            window.parent.postMessage({ 
+                type: 'saveConfig', 
+                config: { position: config.position, scale: config.scale } 
+            }, '*');
+        }
+
         let targetRotation = new THREE.Vector2(0, 0);
         let currentSway = new THREE.Vector2(0, 0);
 
-        // 親(Tampermonkey)からの指示を受信
+        // 親からの通信を受信
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (!data) return;
 
-            if (data.type === 'mouseMove') {
-                // マウスの移動量に応じて目標の角度を傾ける
+            if (data.type === 'toggleEditor') {
+                isEditorMode = data.state;
+                uiElement.style.display = isEditorMode ? 'block' : 'none';
+                if (isEditorMode) {
+                    updateUI(); // エディター起動時にUIを更新
+                    targetRotation.set(0, 0); // エディター中は揺れをリセット
+                    currentSway.set(0, 0);
+                    if (knife) knife.rotation.set(config.rotation.x, config.rotation.y, config.rotation.z);
+                }
+            }
+            else if (data.type === 'mouseMove') {
+                if (isEditorMode) return; // エディター中は揺らさない
                 targetRotation.y += data.movementX * config.swayIntensity;
                 targetRotation.x += data.movementY * config.swayIntensity;
-                
-                // 傾きの限界値を設定（武器が画面外に飛び出さないように）
                 targetRotation.x = THREE.MathUtils.clamp(targetRotation.x, -0.2, 0.2);
                 targetRotation.y = THREE.MathUtils.clamp(targetRotation.y, -0.2, 0.2);
             }
             else if (data.type === 'playAnimation') {
+                if (isEditorMode) return; // エディター中はアニメーションしない
                 const animName = data.name;
                 if (mixer && actions[animName]) {
                     if (currentAction) currentAction.fadeOut(0.1);
                     const action = actions[animName];
                     action.reset().setEffectiveTimeScale(config.animationSpeed).fadeIn(0.1).play();
-                    
-                    // 待機以外のアニメーションは1回だけ再生して止める
                     if (animName !== config.defaultAnimation) {
                         action.setLoop(THREE.LoopOnce);
                         action.clampWhenFinished = true;
@@ -126,12 +179,65 @@
                 }
             }
             else if (data.type === 'updateConfig') {
-                Object.assign(config, data.config);
+                if (data.config.position) {
+                    config.position.x = data.config.position.x;
+                    config.position.y = data.config.position.y;
+                    config.position.z = data.config.position.z;
+                }
+                if (data.config.scale !== undefined) config.scale = data.config.scale;
+                
                 if (knife) {
                     knife.position.set(config.position.x, config.position.y, config.position.z);
+                    knife.scale.setScalar(config.scale);
                 }
             }
         });
+
+        // --- マウスによる直感的なエディット操作 ---
+        window.addEventListener('mousedown', (e) => {
+            if (!isEditorMode) return;
+            isDragging = true;
+            previousMouse = { x: e.clientX, y: e.clientY };
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isEditorMode && isDragging && knife) {
+                const deltaX = e.clientX - previousMouse.x;
+                const deltaY = e.clientY - previousMouse.y;
+                
+                // ドラッグ量に応じて位置を移動 (感度はここで調整)
+                config.position.x += deltaX * 0.005;
+                config.position.y -= deltaY * 0.005;
+                
+                knife.position.x = config.position.x;
+                knife.position.y = config.position.y;
+                
+                previousMouse = { x: e.clientX, y: e.clientY };
+                updateUI();
+            }
+        });
+
+        window.addEventListener('mouseup', () => { isDragging = false; });
+
+        window.addEventListener('wheel', (e) => {
+            if (!isEditorMode || !knife) return;
+            e.preventDefault(); // スクロールによる画面移動を防ぐ
+            
+            const delta = e.deltaY > 0 ? -1 : 1;
+            
+            if (e.shiftKey) {
+                // Shift+スクロールで奥行き(Z軸)を調整
+                config.position.z += delta * 0.05;
+                knife.position.z = config.position.z;
+            } else {
+                // 通常スクロールで大きさ(Scale)を調整
+                config.scale += delta * 0.02;
+                config.scale = Math.max(0.1, config.scale); // マイナスにならないように
+                knife.scale.setScalar(config.scale);
+            }
+            updateUI();
+        }, { passive: false });
+
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -146,12 +252,9 @@
 
             if (mixer) mixer.update(delta);
 
-            if (knife) {
-                // マウスが止まったら徐々に揺れをゼロ（中央）に戻す
+            if (knife && !isEditorMode) {
                 targetRotation.lerp(new THREE.Vector2(0, 0), delta * config.swayRecovery);
-                // 実際のモデルの傾きを滑らかに追従させる
                 currentSway.lerp(targetRotation, delta * 15);
-
                 knife.rotation.set(
                     config.rotation.x + currentSway.x,
                     config.rotation.y + currentSway.y,
