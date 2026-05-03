@@ -2,172 +2,166 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Voxiom Pro-FPS Overlay V4</title>
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxiom Butterfly Knife</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; user-select: none; }
-        /* 編集モード時のカーソル変更 */
-        body.editing { cursor: grab; background: rgba(0, 255, 255, 0.05); }
-        body.editing:active { cursor: grabbing; }
-        model-viewer { width: 100%; height: 100%; background-color: transparent; --poster-color: transparent; }
+        body { margin: 0; overflow: hidden; background-color: transparent; }
+        canvas { display: block; width: 100vw; height: 100vh; }
     </style>
+    <!-- Three.jsのインポート -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-<model-viewer id="mv" src="melee_156.glb" autoplay shadow-intensity="0" 
-    camera-orbit="0deg 90deg 2m" camera-target="0m 0m 0m" field-of-view="30deg"
-    animation-crossfade-duration="300">
-</model-viewer>
+        // ==========================================
+        // 🔪 モデルの精密な配置と揺れの設定
+        // ==========================================
+        let config = {
+            position: { x: 0.8, y: -0.6, z: -1.5 }, // x:左右, y:上下, z:奥行き (ゲーム画面に合わせて微調整)
+            rotation: { x: 0, y: Math.PI / 2, z: 0 }, // モデルの初期角度
+            scale: 1.0,                               // モデルの大きさ
+            swayIntensity: 0.0015,                    // マウスを動かしたときの揺れの強さ
+            swayRecovery: 5.0,                        // 揺れが元に戻る速さ
+            animationSpeed: 1.0,                      // アニメーション全体の再生速度
+            defaultAnimation: 'idle'                  // 何もしていない時の待機アニメーション名（GLB内の名前に合わせる）
+        };
 
-<script>
-    const mv = document.querySelector("#mv");
-    let config = { posX: 0, posY: 0, posZ: 0, theta: 0, phi: 90, fov: 30, scale: 1 };
-    
-    // FPS風挙動の計算用変数
-    let targetSwayX = 0, targetSwayY = 0;
-    let currentSwayX = 0, currentSwayY = 0;
-    let currentRotationZ = 0;
-    let isWalking = false;
-    let swayTime = 0;
-    let idleTime = 0;
+        const scene = new THREE.Scene();
+        // FPSの標準的な視野角(FOV:75)
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000, 0); // 背景を完全に透明化
+        document.body.appendChild(renderer.domElement);
 
-    let isEditing = false;
-    let currentAction = "idle";
+        // ゲーム内の環境に合わせたライティング
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(5, 10, 2);
+        scene.add(dirLight);
 
-    const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+        let knife, mixer;
+        const actions = {};
+        let currentAction = null;
 
-    // アニメーション再生ロジック
-    function playAnimation(name, loop = false) {
-        if (!mv.availableAnimations || mv.availableAnimations.length === 0) return;
-        const anims = mv.availableAnimations;
-        // 名前でアニメーションを検索 (idle, attack, inspect等)
-        let targetAnim = anims.find(a => a.toLowerCase().includes(name));
-        if (!targetAnim) targetAnim = anims[0]; // 見つからなければデフォルト
+        const loader = new GLTFLoader();
+        loader.load('melee_156.glb', (gltf) => {
+            knife = gltf.scene;
+            
+            knife.position.set(config.position.x, config.position.y, config.position.z);
+            knife.rotation.set(config.rotation.x, config.rotation.y, config.rotation.z);
+            knife.scale.setScalar(config.scale);
 
-        mv.animationName = targetAnim;
-        if (loop) {
-            mv.play({ repetitions: Infinity });
-        } else {
-            mv.play({ repetitions: 1 });
-            // 再生が終わったら自動的にIdle(待機)に戻る
-            mv.addEventListener('finished', () => {
-                if(currentAction !== 'idle') {
-                    currentAction = 'idle';
-                    playAnimation('idle', true);
+            // カメラの子要素にすることで、視点移動時に常に画面の定位置（FPS視点）に固定される
+            camera.add(knife);
+            scene.add(camera);
+
+            if (gltf.animations && gltf.animations.length > 0) {
+                mixer = new THREE.AnimationMixer(knife);
+                gltf.animations.forEach((clip) => {
+                    actions[clip.name] = mixer.clipAction(clip);
+                });
+
+                // アニメーション終了時の処理（再生が終わったら待機状態に戻る）
+                mixer.addEventListener('finished', (e) => {
+                    if (e.action === currentAction && actions[config.defaultAnimation]) {
+                        e.action.fadeOut(0.2);
+                        actions[config.defaultAnimation].reset().fadeIn(0.2).play();
+                        currentAction = actions[config.defaultAnimation];
+                    }
+                });
+
+                // 初期アニメーション再生
+                let idleAnim = actions[config.defaultAnimation] || actions[gltf.animations[0].name];
+                if (idleAnim) {
+                    idleAnim.play();
+                    currentAction = idleAnim;
                 }
-            }, { once: true });
-        }
-    }
+            }
+        });
 
-    // ロード完了時に待機アニメーションを開始
-    mv.addEventListener('load', () => playAnimation('idle', true));
+        // 揺れ（Sway）の計算用ベクトル
+        let targetRotation = new THREE.Vector2(0, 0);
+        let currentSway = new THREE.Vector2(0, 0);
 
-    function update() {
-        if (!mv.loaded) { requestAnimationFrame(update); return; }
+        // 親(Tampermonkey)からの指示を受信
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
 
-        if (!isEditing) {
-            // Sway (視点移動時の慣性)
-            currentSwayX = lerp(currentSwayX, targetSwayX, 0.1);
-            currentSwayY = lerp(currentSwayY, targetSwayY, 0.1);
-            currentRotationZ = lerp(currentRotationZ, targetSwayX * 20, 0.08); // 傾き
+            if (data.type === 'mouseMove') {
+                // マウスの移動量に応じて目標の角度を傾ける
+                targetRotation.y += data.movementX * config.swayIntensity;
+                targetRotation.x += data.movementY * config.swayIntensity;
+                
+                // 傾きの限界値を設定（武器が画面外に飛び出さないように）
+                targetRotation.x = THREE.MathUtils.clamp(targetRotation.x, -0.2, 0.2);
+                targetRotation.y = THREE.MathUtils.clamp(targetRotation.y, -0.2, 0.2);
+            }
+            else if (data.type === 'playAnimation') {
+                const animName = data.name;
+                if (mixer && actions[animName]) {
+                    if (currentAction) currentAction.fadeOut(0.1);
+                    const action = actions[animName];
+                    action.reset().setEffectiveTimeScale(config.animationSpeed).fadeIn(0.1).play();
+                    
+                    // 待機以外のアニメーションは1回だけ再生して止める
+                    if (animName !== config.defaultAnimation) {
+                        action.setLoop(THREE.LoopOnce);
+                        action.clampWhenFinished = true;
+                    }
+                    currentAction = action;
+                }
+            }
+            else if (data.type === 'updateConfig') {
+                Object.assign(config, data.config);
+                if (knife) {
+                    knife.position.set(config.position.x, config.position.y, config.position.z);
+                }
+            }
+        });
 
-            // 中心へ戻ろうとするバネの力
-            targetSwayX = lerp(targetSwayX, 0, 0.05);
-            targetSwayY = lerp(targetSwayY, 0, 0.05);
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
 
-            // Bobbing (歩行揺れと呼吸揺れ)
-            let bobX = 0, bobY = 0;
-            if (isWalking) {
-                swayTime += 0.12;
-                bobX = Math.cos(swayTime) * 0.015; // 左右
-                bobY = Math.abs(Math.sin(swayTime)) * 0.015; // 上下(バウンス)
-            } else {
-                idleTime += 0.02;
-                bobX = Math.cos(idleTime) * 0.002;
-                bobY = Math.sin(idleTime * 2) * 0.002; // ゆっくりした呼吸
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (mixer) mixer.update(delta);
+
+            if (knife) {
+                // マウスが止まったら徐々に揺れをゼロ（中央）に戻す
+                targetRotation.lerp(new THREE.Vector2(0, 0), delta * config.swayRecovery);
+                // 実際のモデルの傾きを滑らかに追従させる
+                currentSway.lerp(targetRotation, delta * 15);
+
+                knife.rotation.set(
+                    config.rotation.x + currentSway.x,
+                    config.rotation.y + currentSway.y,
+                    config.rotation.z
+                );
             }
 
-            let finalX = config.posX - currentSwayX + bobX;
-            let finalY = config.posY + currentSwayY + bobY;
-
-            mv.cameraTarget = `${finalX}m ${finalY}m ${config.posZ}m`;
-            mv.cameraOrbit = `${config.theta + currentRotationZ}deg ${config.phi}deg 2m`;
-        } else {
-            // 編集モード中は揺れをストップして正確に配置
-            mv.cameraTarget = `${config.posX}m ${config.posY}m ${config.posZ}m`;
-            mv.cameraOrbit = `${config.theta}deg ${config.phi}deg 2m`;
+            renderer.render(scene, camera);
         }
-
-        requestAnimationFrame(update);
-    }
-    update();
-
-    // 編集モードのドラッグ操作ロジック
-    let isDragging = false;
-    let dragStart = { x: 0, y: 0 };
-    let dragButton = 0;
-
-    window.addEventListener('mousedown', (e) => {
-        if (!isEditing) return;
-        isDragging = true;
-        dragButton = e.button;
-        dragStart = { x: e.clientX, y: e.clientY };
-    });
-
-    window.addEventListener('mousemove', (e) => {
-        if (isEditing && isDragging) {
-            let dx = e.clientX - dragStart.x;
-            let dy = e.clientY - dragStart.y;
-            dragStart = { x: e.clientX, y: e.clientY };
-
-            if (dragButton === 0) { // 左クリック：位置の移動
-                config.posX -= dx * 0.005;
-                config.posY += dy * 0.005;
-            } else if (dragButton === 2) { // 右クリック：回転
-                config.theta -= dx * 0.5;
-                config.phi -= dy * 0.5;
-                config.phi = Math.max(0, Math.min(180, config.phi)); // 上下の限界
-            }
-            // 親ウィンドウ(UserScript)に変更を送信して同期
-            window.parent.postMessage({ type: 'sync', config: config }, '*');
-        }
-    });
-
-    window.addEventListener('mouseup', () => isDragging = false);
-    window.addEventListener('wheel', (e) => {
-        if (!isEditing) return;
-        config.fov += e.deltaY > 0 ? 1 : -1;
-        config.fov = Math.max(10, Math.min(100, config.fov));
-        mv.fieldOfView = `${config.fov}deg`;
-        window.parent.postMessage({ type: 'sync', config: config }, '*');
-    });
-    window.addEventListener('contextmenu', e => e.preventDefault());
-
-    // UserScriptからの命令受信
-    window.addEventListener("message", (event) => {
-        const d = event.data;
-        if (d.type === "mouseMove" && !isEditing) {
-            // Swayのターゲットを更新（画面外に行きすぎないよう制限）
-            targetSwayX += d.dx * 0.001;
-            targetSwayY += d.dy * 0.001;
-            targetSwayX = Math.max(-0.04, Math.min(0.04, targetSwayX));
-            targetSwayY = Math.max(-0.04, Math.min(0.04, targetSwayY));
-        }
-        if (d.type === "config") {
-            config = { ...config, ...d };
-            mv.scale = `${d.scale} ${d.scale} ${d.scale}`;
-            mv.fieldOfView = `${d.fov}deg`;
-        }
-        if (d.type === "action" && !isEditing) {
-            currentAction = d.action;
-            playAnimation(d.action, false);
-        }
-        if (d.type === "state") isWalking = d.isWalking;
-        if (d.type === "editMode") {
-            isEditing = d.value;
-            document.body.classList.toggle('editing', isEditing);
-        }
-    });
-</script>
+        animate();
+    </script>
 </body>
 </html>
