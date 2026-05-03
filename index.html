@@ -7,15 +7,15 @@
     <style>
         body { margin: 0; overflow: hidden; background-color: transparent; user-select: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
-        /* lil-guiのフォント調整 */
         .lil-gui { --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     </style>
-    <!-- Three.jsとUIツール(lil-gui)のインポート -->
+    <!-- 安定版のモジュール読み込み -->
     <script type="importmap">
         {
             "imports": {
                 "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
             }
         }
     </script>
@@ -24,9 +24,8 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import GUI from 'three/addons/libs/lil-gui.module.min.js';
+        import GUI from 'lil-gui';
 
-        // 設定の基本オブジェクト
         let config = {
             position: { x: 0.8, y: -0.6, z: -1.5 },
             rotation: { x: 0, y: Math.PI / 2, z: 0 },
@@ -55,35 +54,39 @@
         const actions = {};
         let currentAction = null;
 
-        // 💡 変更をTampermonkeyに送信してセーブする関数
         const saveConfig = () => {
             window.parent.postMessage({ type: 'saveConfig', config: config }, '*');
         };
 
-        // ===============================================
-        // 🔧 限界まで調整可能なプロ仕様エディターUI (lil-gui)
-        // ===============================================
+        // UIエディター
         const gui = new GUI({ title: '🔪 限界設定エディター (Alt+Eで終了)' });
-        gui.hide(); // 通常時は隠す
+        gui.hide();
 
-        // 1. 位置の調整パネル (0.001刻み)
         const posFolder = gui.addFolder('位置 (Position)');
         posFolder.add(config.position, 'x', -5, 5, 0.001).name('X (左右)').listen().onChange(() => { if (knife) knife.position.x = config.position.x; saveConfig(); });
         posFolder.add(config.position, 'y', -5, 5, 0.001).name('Y (上下)').listen().onChange(() => { if (knife) knife.position.y = config.position.y; saveConfig(); });
         posFolder.add(config.position, 'z', -5, 5, 0.001).name('Z (奥行き)').listen().onChange(() => { if (knife) knife.position.z = config.position.z; saveConfig(); });
 
-        // 2. 向き(角度)の調整パネル (0.001刻み)
         const rotFolder = gui.addFolder('向き (Rotation)');
-        rotFolder.add(config.rotation, 'x', -Math.PI * 2, Math.PI * 2, 0.001).name('X回転 (縦振り)').listen().onChange(() => { if (knife) knife.rotation.x = config.rotation.x; saveConfig(); });
-        rotFolder.add(config.rotation, 'y', -Math.PI * 2, Math.PI * 2, 0.001).name('Y回転 (横振り)').listen().onChange(() => { if (knife) knife.rotation.y = config.rotation.y; saveConfig(); });
-        rotFolder.add(config.rotation, 'z', -Math.PI * 2, Math.PI * 2, 0.001).name('Z回転 (捻り)').listen().onChange(() => { if (knife) knife.rotation.z = config.rotation.z; saveConfig(); });
+        rotFolder.add(config.rotation, 'x', -Math.PI * 2, Math.PI * 2, 0.001).name('X回転').listen().onChange(() => { if (knife) knife.rotation.x = config.rotation.x; saveConfig(); });
+        rotFolder.add(config.rotation, 'y', -Math.PI * 2, Math.PI * 2, 0.001).name('Y回転').listen().onChange(() => { if (knife) knife.rotation.y = config.rotation.y; saveConfig(); });
+        rotFolder.add(config.rotation, 'z', -Math.PI * 2, Math.PI * 2, 0.001).name('Z回転').listen().onChange(() => { if (knife) knife.rotation.z = config.rotation.z; saveConfig(); });
 
-        // 3. その他の調整パネル
         const miscFolder = gui.addFolder('その他 (Misc)');
-        miscFolder.add(config, 'scale', 0.01, 5, 0.001).name('大きさ (Scale)').listen().onChange(() => { if (knife) knife.scale.setScalar(config.scale); saveConfig(); });
-        miscFolder.add(config, 'animationSpeed', 0.1, 5, 0.01).name('アニメ再生速度').listen().onChange(saveConfig);
-        miscFolder.add(config, 'swayIntensity', 0, 0.01, 0.0001).name('マウス揺れの強さ').listen().onChange(saveConfig);
+        miscFolder.add(config, 'scale', 0.01, 5, 0.001).name('大きさ').listen().onChange(() => { if (knife) knife.scale.setScalar(config.scale); saveConfig(); });
+        miscFolder.add(config, 'animationSpeed', 0.1, 5, 0.01).name('アニメ速度').listen().onChange(saveConfig);
+        miscFolder.add(config, 'swayIntensity', 0, 0.01, 0.0001).name('揺れの強さ').listen().onChange(saveConfig);
         
+        // 🆘 リセット機能
+        const resetObj = {
+            reset: () => {
+                if (confirm("ナイフが見えなくなった場合などに使用します。設定を初期化してリロードしますか？")) {
+                    window.parent.postMessage({ type: 'resetConfig' }, '*');
+                }
+            }
+        };
+        gui.add(resetObj, 'reset').name('⚠️ 全て初期位置にリセット');
+
         const loader = new GLTFLoader();
         loader.load('melee_156.glb', (gltf) => {
             knife = gltf.scene;
@@ -111,14 +114,12 @@
             }
         });
 
-        // ステート管理
         let isEditorMode = false;
         let isDragging = false;
         let previousMouse = { x: 0, y: 0 };
         let targetRotation = new THREE.Vector2(0, 0);
         let currentSway = new THREE.Vector2(0, 0);
 
-        // 通信受信
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (!data) return;
@@ -157,7 +158,6 @@
             }
             else if (data.type === 'updateConfig') {
                 const c = data.config;
-                // UIと紐付いているため、オブジェクトを上書きせず中身の数値を更新する
                 if (c.position) { config.position.x = c.position.x; config.position.y = c.position.y; config.position.z = c.position.z; }
                 if (c.rotation) { config.rotation.x = c.rotation.x; config.rotation.y = c.rotation.y; config.rotation.z = c.rotation.z; }
                 if (c.scale !== undefined) config.scale = c.scale;
@@ -173,7 +173,6 @@
             }
         });
 
-        // マウスによる直感ドラッグ操作 (UI以外の背景を触った時)
         window.addEventListener('mousedown', (e) => {
             if (!isEditorMode || e.target.closest('.lil-gui')) return;
             isDragging = true;
@@ -189,7 +188,7 @@
                 knife.position.x = config.position.x;
                 knife.position.y = config.position.y;
                 previousMouse = { x: e.clientX, y: e.clientY };
-                saveConfig(); // UIにも連動して数値が変わる
+                saveConfig(); 
             }
         });
 
@@ -218,7 +217,7 @@
 
         const clock = new THREE.Clock();
         function animate() {
-            requestAnimationFrame(animate);F
+            requestAnimationFrame(animate);
             const delta = clock.getDelta();
 
             if (mixer) mixer.update(delta);
